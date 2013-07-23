@@ -8,6 +8,8 @@
  */
 
 #include <stdio.h>
+#include <string.h> //
+#include <unistd.h> //
 #include <libmemcached/memcached.h>
 
 #include <lua.h>
@@ -16,7 +18,7 @@
 #include <lua-libmemcached.h>
 
 // meta methods
-const struct luaL_reg memc_methods[] = {
+const struct luaL_reg methods[] = {
   {"add_server",      memc_add_server},
   {"set_behavior",    memc_set_behavior},
   {"get_behavior",    memc_get_behavior},
@@ -39,12 +41,32 @@ const struct luaL_reg memc_methods[] = {
   {NULL,              NULL}
 };
 
-const struct luaL_reg memc_reg[] = {
+const struct luaL_reg metamethods[] = {
+  {"__gc", memc_free},
+  {NULL,   NULL}
+};
+
+const struct luaL_reg functions[] = {
   {"new", memc_new},
   {NULL,  NULL}
 };
 
-static int memc_add_server(lua_State *L) { return 0; }
+struct userdata {
+  memcached_st *mc;
+  memcached_server_st *servers;
+};
+
+static void add_servers(lua_State *L, memcached_server_st *servers, memcached_return *rc) {
+  // wank to add server(s) (new/add_server)
+}
+
+static void add_behaviors(lua_State *L, memcached_st *memcached, memcached_return *rc) {
+  // wank to add behavior(s) (new/set_behavior)
+}
+
+static int memc_add_server(lua_State *L) {
+  return 0; 
+};
 
 static int memc_set_behavior(lua_State *L) { return 0; }
 
@@ -66,7 +88,9 @@ static int memc_prepend_multi(lua_State *L) { return 0; }
 
 static int memc_check_key(lua_State *L) { return 0; }
 
-static int memc_set(lua_State *L) { return 0; }
+static int memc_set(lua_State *L) {
+  return 0;
+}
 
 static int memc_set_multi(lua_State *L) { return 0; }
 
@@ -74,7 +98,9 @@ static int memc_delete(lua_State *L) { return 0; }
 
 static int memc_delete_multi(lua_State *L) { return 0; }
 
-static int memc_get(lua_State *L) { return 0; }
+static int memc_get(lua_State *L) {
+  return 0;
+}
 
 static int memc_get_multi(lua_State *L) { return 0; }
 
@@ -82,36 +108,61 @@ static int memc_incr(lua_State *L) { return 0; }
 
 static int memc_decr(lua_State *L) { return 0; }
 
-// free garbage after gc call
-static int memc_free(lua_State *L) { 
-  printf("## __gc\n");
+//
+static int memc_free(lua_State *L) {
+  struct userdata *udata = luaL_checkudata(L, 1, LUA_LIBMEMCACHED);
+  
+  memcached_server_list_free(udata->servers);
+  memcached_free(udata->mc);
+  
   return 0;
 }
 
 // new instance
 static int memc_new(lua_State *L) {
+  struct userdata *udata;
+  memcached_st *mc;
+  memcached_server_st *servers = NULL;
+  memcached_return rc;
 
-  lua_createtable(L, 0, 0);
+  udata   = lua_newuserdata(L, sizeof(struct userdata));
+  mc      = memcached_create(NULL);
+  servers = memcached_server_list_append(servers, "localhost", 11211, &rc);
+  rc      = memcached_server_push(mc, servers);
 
-  luaL_newmetatable(L, "memc");
+  if (rc != MEMCACHED_SUCCESS)
+    fprintf(stderr, "Couldn't add server: %s\n", memcached_strerror(mc, rc));
 
-  lua_pushcfunction(L, memc_free);
-  lua_setfield(L, -2, "__gc");
-
-  luaL_newlib(L, memc_methods);
-  lua_setfield(L, -2, "__index");
-
-  lua_setmetatable(L, -1);
-
-  luaL_getmetatable(L, "libmemcached");
+  luaL_getmetatable(L, LUA_LIBMEMCACHED);
   lua_setmetatable(L, -2);
+
+  udata->mc      = mc;
+  udata->servers = servers;
+
   return 1;  
 }
 
 // register lib
 LUALIB_API int luaopen_libmemcached(lua_State *L) {
-  luaL_register(L, "libmemcached", memc_obj);
 
+  // create metatable.
+  luaL_newmetatable(L, LUA_LIBMEMCACHED);
+  luaL_setfuncs(L, metamethods, 0);
+
+  // create methods table.
+  lua_newtable(L);
+  luaL_setfuncs(L, methods, 0);
+
+  // set __index field of metatable to point to methods table.
+  lua_setfield(L, -2, "__index");
+
+  // pop metatable, it is no longer needed.
+  lua_pop(L, 1);
+
+  // create module functions table.
+  lua_newtable(L);
+
+  // set behaviors.
   lua_set_const(L, MEMCACHED_BEHAVIOR_NO_BLOCK,               "BEHAVIOR_NO_BLOCK");
   lua_set_const(L, MEMCACHED_BEHAVIOR_TCP_NODELAY,            "BEHAVIOR_TCP_NODELAY");
   lua_set_const(L, MEMCACHED_BEHAVIOR_HASH,                   "BEHAVIOR_HASH");
@@ -148,7 +199,7 @@ LUALIB_API int luaopen_libmemcached(lua_State *L) {
   lua_set_const(L, MEMCACHED_BEHAVIOR_TCP_KEEPIDLE,           "BEHAVIOR_TCP_KEEPIDLE");
   lua_set_const(L, MEMCACHED_BEHAVIOR_MAX,                    "BEHAVIOR_MAX");
 
-  // memcached_server_distribution:
+  // memcached server distribution.
   lua_set_const(L, MEMCACHED_DISTRIBUTION_MODULA,                "DISTRIBUTION_MODULA");
   lua_set_const(L, MEMCACHED_DISTRIBUTION_CONSISTENT,            "DISTRIBUTION_CONSISTENT");
   lua_set_const(L, MEMCACHED_DISTRIBUTION_CONSISTENT_KETAMA,     "DISTRIBUTION_CONSISTENT_KETAMA");
@@ -156,7 +207,7 @@ LUALIB_API int luaopen_libmemcached(lua_State *L) {
   lua_set_const(L, MEMCACHED_DISTRIBUTION_CONSISTENT_KETAMA_SPY, "DISTRIBUTION_CONSISTENT_KETAMA_SPY");
   lua_set_const(L, MEMCACHED_DISTRIBUTION_CONSISTENT_MAX,        "DISTRIBUTION_CONSISTENT_MAX");
 
-  // memcached_hash:
+  // memcached hash.
   lua_set_const(L, MEMCACHED_HASH_DEFAULT,  "HASH_DEFAULT"); //=0
   lua_set_const(L, MEMCACHED_HASH_MD5,      "HASH_MD5");
   lua_set_const(L, MEMCACHED_HASH_CRC,      "HASH_CRC");
@@ -170,12 +221,28 @@ LUALIB_API int luaopen_libmemcached(lua_State *L) {
   lua_set_const(L, MEMCACHED_HASH_CUSTOM,   "HASH_CUSTOM");
   lua_set_const(L, MEMCACHED_HASH_MAX,      "HASH_MAX");
 
-  // memcached_connection
+  // memcached connection.
   lua_set_const(L, MEMCACHED_CONNECTION_UNKNOWN,     "CONNECTION_UNKNOWN");
   lua_set_const(L, MEMCACHED_CONNECTION_TCP,         "CONNECTION_TCP");
   lua_set_const(L, MEMCACHED_CONNECTION_UDP,         "CONNECTION_UDP");
   lua_set_const(L, MEMCACHED_CONNECTION_UNIX_SOCKET, "CONNECTION_UNIX_SOCKET");
   lua_set_const(L, MEMCACHED_CONNECTION_MAX,         "CONNECTION_MAX");
+
+  // set functions.
+  luaL_setfuncs(L, functions, 0);
+
+  // 
+  lua_pushliteral(L, "_COPYRIGHT");
+  lua_pushliteral(L, "BEER-WARE");
+  lua_settable(L, -3);
+
+  lua_pushliteral(L, "_DESCRIPTION");
+  lua_pushliteral(L, "Lua binding to libmemcached");
+  lua_settable(L, -3);
+
+  lua_pushliteral(L, "_VERSION");
+  lua_pushnumber(L, 0.1);
+  lua_settable (L, -3);
 
   return 1;
 }
