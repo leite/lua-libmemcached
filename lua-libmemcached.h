@@ -21,6 +21,7 @@
 #endif
 
 #define lua_set_const(L, con, name) {lua_pushnumber(L, con); lua_setfield(L, -2, name);}
+#define lua_set_sconst(L, con, name) {lua_pushstring(L, con); lua_setfield(L, -2, name);}
 #define LUA_LIBMEMCACHED "libmemcached"
 
 static int memc_new(lua_State *L);
