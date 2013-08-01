@@ -7,10 +7,11 @@
  * ----------------------------------------------------------------------------
  */
 
+#define STRCMP(a,b) (strcmp(a,b) == 0)
+
 #ifndef LUA_API
 #define LUA_API __declspec(dllexport)
 #endif
-
 
 #if !defined LUA_VERSION_NUM || LUA_VERSION_NUM==501
 #define lua_rawlen lua_objlen
@@ -23,6 +24,26 @@
 #define lua_set_const(L, con, name) {lua_pushnumber(L, con); lua_setfield(L, -2, name);}
 #define lua_set_sconst(L, con, name) {lua_pushstring(L, con); lua_setfield(L, -2, name);}
 #define LUA_LIBMEMCACHED "libmemcached"
+
+#ifndef MEMCACHED_BEHAVIOR_KEEPALIVE
+#define MEMCACHED_BEHAVIOR_KEEPALIVE 0
+#endif
+
+#ifndef MEMCACHED_BEHAVIOR_KEEPALIVE_IDLE
+#define MEMCACHED_BEHAVIOR_KEEPALIVE_IDLE 0
+#endif
+
+#ifndef MEMCACHED_KETAMA_COMPAT_LIBMEMCACHED
+#define MEMCACHED_KETAMA_COMPAT_LIBMEMCACHED 0
+#endif
+
+#ifndef MEMCACHED_BEHAVIOR_KETAMA_COMPAT
+#define MEMCACHED_BEHAVIOR_KETAMA_COMPAT 0
+#endif
+
+#ifndef MEMCACHED_KETAMA_COMPAT_SPY
+#define MEMCACHED_KETAMA_COMPAT_SPY 0
+#endif
 
 static int memc_new(lua_State *L);
 static int memc_add_server(lua_State *L);
