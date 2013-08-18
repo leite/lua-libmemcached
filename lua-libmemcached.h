@@ -25,24 +25,19 @@
 #define lua_set_sconst(L, con, name) {lua_pushstring(L, con); lua_setfield(L, -2, name);}
 #define LUA_LIBMEMCACHED "libmemcached"
 
-#ifndef MEMCACHED_BEHAVIOR_KEEPALIVE
-#define MEMCACHED_BEHAVIOR_KEEPALIVE -1
+#if !defined mempcpy
+void *mempcpy(void *dst, const void *src, size_t len) {
+  return (char *) memcpy(dst, src, len) + len;
+}
 #endif
 
-#ifndef MEMCACHED_BEHAVIOR_KEEPALIVE_IDLE
-#define MEMCACHED_BEHAVIOR_KEEPALIVE_IDLE -1
+#if !defined LIBMEMCACHED_VERSION_HEX || LIBMEMCACHED_VERSION_HEX<0x1000015
+#define MEMCACHED_HASH_MURMUR3 -3
 #endif
 
-#ifndef MEMCACHED_KETAMA_COMPAT_LIBMEMCACHED
-#define MEMCACHED_KETAMA_COMPAT_LIBMEMCACHED -1
-#endif
-
-#ifndef MEMCACHED_BEHAVIOR_KETAMA_COMPAT
-#define MEMCACHED_BEHAVIOR_KETAMA_COMPAT -1
-#endif
-
-#ifndef MEMCACHED_KETAMA_COMPAT_SPY
-#define MEMCACHED_KETAMA_COMPAT_SPY -1
+#if !defined LIBMEMCACHED_VERSION_HEX || LIBMEMCACHED_VERSION_HEX>0x1000002
+#define MEMCACHED_CONNECTION_MAX -6
+#define MEMCACHED_CONNECTION_UNKNOWN -9
 #endif
 
 static int memc_new(lua_State *L);
@@ -54,15 +49,10 @@ static int memc_replace(lua_State *L);
 static int memc_cas(lua_State *L);
 static int memc_append(lua_State *L);
 static int memc_prepend(lua_State *L);
-static int memc_append_multi(lua_State *L);
-static int memc_prepend_multi(lua_State *L);
 static int memc_check_key(lua_State *L);
 static int memc_set(lua_State *L);
-static int memc_set_multi(lua_State *L);
 static int memc_delete(lua_State *L);
-static int memc_delete_multi(lua_State *L);
 static int memc_get(lua_State *L);
-static int memc_get_multi(lua_State *L);
 static int memc_incr(lua_State *L);
 static int memc_decr(lua_State *L);
 static int memc_free(lua_State *L);
