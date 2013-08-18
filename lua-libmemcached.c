@@ -8,44 +8,40 @@
  */
 
 #include <stdio.h>
-#include <string.h> //
-//#include <unistd.h> //
+#include <string.h>
 #include <libmemcached/memcached.h>
 
 #include <lua.h>
 #include <lauxlib.h>
 #include <lualib.h>
-#include <lua-libmemcached.h>
+#include "lua-libmemcached.h"
 
-// meta methods
+//
 const struct luaL_reg methods[] = {
-  {"add_server",      &memc_add_server},
-  {"set_behavior",    &memc_set_behavior},
-  {"get_behavior",    &memc_get_behavior},
-  {"add",             &memc_add},
-  {"replace",         &memc_replace},
-  {"cas",             &memc_cas},
-  {"append",          &memc_append},
-  {"prepend",         &memc_prepend},
-  {"append_multi",    &memc_append_multi},
-  {"prepend_multi",   &memc_prepend_multi},
-  {"check_key",       &memc_check_key},
-  {"set",             &memc_set},
-  {"set_multi",       &memc_set_multi},
-  {"delete",          &memc_delete},
-  {"delete_multi",    &memc_delete_multi},
-  {"get",             &memc_get},
-  {"get_multi",       &memc_get_multi},
-  {"incr",            &memc_incr},
-  {"decr",            &memc_decr},
-  {NULL,              NULL}
+  {"add_server",   &memc_add_server},
+  {"set_behavior", &memc_set_behavior},
+  {"get_behavior", &memc_get_behavior},
+  {"add",          &memc_add},
+  {"replace",      &memc_replace},
+  {"cas",          &memc_cas},
+  {"append",       &memc_append},
+  {"prepend",      &memc_prepend},
+  {"check_key",    &memc_check_key},
+  {"set",          &memc_set},
+  {"delete",       &memc_delete},
+  {"get",          &memc_get},
+  {"incr",         &memc_incr},
+  {"decr",         &memc_decr},
+  {NULL,           NULL}
 };
 
+//
 const struct luaL_reg metamethods[] = {
   {"__gc", &memc_free},
   {NULL,   NULL}
 };
 
+//
 const struct luaL_reg functions[] = {
   {"new", &memc_new},
   {NULL,  NULL}
@@ -54,6 +50,7 @@ const struct luaL_reg functions[] = {
 enum storage_type{ ADD, SET, REPLACE, CAS, APPEND, PREPEND } s_type;
 enum operation_type{ INCREMENT, DECREMENT } o_type;
 
+// debug only
 #ifdef DEBUG
 static void log_me(const char *name) {
   printf("\n >> %s\n", name);
@@ -80,6 +77,25 @@ static void stack_dump(lua_State *L) {
 static void log_me(const char *name) {}
 static void stack_dump(lua_State *L) {}
 #endif
+
+static void should_buffer(memcached_st *memcache, int *bitwise_flag) {
+  memcached_return status;
+
+  if(*bitwise_flag > 0) {
+    if((*bitwise_flag & 2))
+      status = memcached_behavior_set(memcache, MEMCACHED_BEHAVIOR_NOREPLY, 0);
+    if((*bitwise_flag & 4))
+      status = memcached_behavior_set(memcache, MEMCACHED_BEHAVIOR_BUFFER_REQUESTS, 0);
+  } else {
+    *bitwise_flag  = 1;
+    *bitwise_flag += ((memcached_behavior_get(memcache, MEMCACHED_BEHAVIOR_NOREPLY)==0) ? 2 : 0);
+    *bitwise_flag += ((memcached_behavior_get(memcache, MEMCACHED_BEHAVIOR_BUFFER_REQUESTS)==0) ? 4 : 0);
+    if((*bitwise_flag & 2))
+      status = memcached_behavior_set(memcache, MEMCACHED_BEHAVIOR_NOREPLY, 1);
+    if((*bitwise_flag & 4))
+      status = memcached_behavior_set(memcache, MEMCACHED_BEHAVIOR_BUFFER_REQUESTS, 1);
+  }
+}
 
 static void add_servers(lua_State *L, memcached_st *memcache, memcached_return *status) {
   memcached_server_st *servers = NULL;
@@ -147,15 +163,6 @@ static void add_servers(lua_State *L, memcached_st *memcache, memcached_return *
       return; 
   }
 
-  if(lua_gettop(L)>1) {
-    lua_pushvalue(L, 2);
-    lua_replace(L, 1);
-    lua_replace(L, 2);
-  }
-
-  if(lua_gettop(L)>2)
-    lua_pop(L, (unsigned int)lua_gettop(L)-2);
-
   memcached_server_list_free(servers);
 }
 
@@ -166,7 +173,7 @@ static void get_behavior(lua_State *L, const char *const_name, memcached_st *mem
   if(STRCMP(const_name, "use_binary"))  behavior = MEMCACHED_BEHAVIOR_BINARY_PROTOCOL;
   if(STRCMP(const_name, "use_udp"))     behavior = MEMCACHED_BEHAVIOR_USE_UDP;
   if(STRCMP(const_name, "no_block"))    behavior = MEMCACHED_BEHAVIOR_NO_BLOCK;
-  if(STRCMP(const_name, "keepalive"))   behavior = MEMCACHED_BEHAVIOR_KEEPALIVE;
+  if(STRCMP(const_name, "keepalive"))   behavior = MEMCACHED_BEHAVIOR_TCP_KEEPALIVE;
   if(STRCMP(const_name, "enable_cas"))  behavior = MEMCACHED_BEHAVIOR_SUPPORT_CAS;
   if(STRCMP(const_name, "tcp_nodelay")) behavior = MEMCACHED_BEHAVIOR_TCP_NODELAY;
   if(STRCMP(const_name, "no_reply"))    behavior = MEMCACHED_BEHAVIOR_NOREPLY;
@@ -180,7 +187,7 @@ static void get_behavior(lua_State *L, const char *const_name, memcached_st *mem
   if(STRCMP(const_name, "receive_timeout")) behavior = MEMCACHED_BEHAVIOR_RCV_TIMEOUT;
   if(STRCMP(const_name, "connect_timeout")) behavior = MEMCACHED_BEHAVIOR_CONNECT_TIMEOUT;
   if(STRCMP(const_name, "poll_timeout"))    behavior = MEMCACHED_BEHAVIOR_POLL_TIMEOUT;
-  if(STRCMP(const_name, "keepalive_idle"))  behavior = MEMCACHED_BEHAVIOR_KEEPALIVE_IDLE;
+  if(STRCMP(const_name, "keepalive_idle"))  behavior = MEMCACHED_BEHAVIOR_TCP_KEEPIDLE;
   if(STRCMP(const_name, "retry_timeout"))   behavior = MEMCACHED_BEHAVIOR_RETRY_TIMEOUT;
   if(behavior != -1) {
     value = memcached_behavior_get(memcache, behavior);
@@ -202,27 +209,32 @@ static void get_behavior(lua_State *L, const char *const_name, memcached_st *mem
       case MEMCACHED_HASH_JENKINS:  lua_pushstring(L, "jenkins");
       case MEMCACHED_HASH_HSIEH:    lua_pushstring(L, "hsieh");
       case MEMCACHED_HASH_MURMUR:   lua_pushstring(L, "murmur");
+      case MEMCACHED_HASH_MURMUR3:  lua_pushstring(L, "murmur3");
       case MEMCACHED_HASH_DEFAULT:  
-      default:
+      default: 
         lua_pushstring(L, "default");
+        break;
     }
     return;
   }
-  
+
   if(const_name=="distribution") behavior = MEMCACHED_BEHAVIOR_DISTRIBUTION;
   if(behavior != -1) {
     value = memcached_behavior_get(memcache, behavior);
-    if(MEMCACHED_DISTRIBUTION_MODULA==value) {            lua_pushstring(L, "modula");
-    } else if(MEMCACHED_DISTRIBUTION_CONSISTENT==value) { lua_pushstring(L, "consistent");
-    } else {
-      if(MEMCACHED_BEHAVIOR_KETAMA_WEIGHTED != -1 && (value = memcached_behavior_get(memcache, MEMCACHED_BEHAVIOR_KETAMA_WEIGHTED))>-1) {
-        lua_pushstring(L, "weighted");
-      } else if(MEMCACHED_BEHAVIOR_KETAMA_COMPAT != -1 && (value = memcached_behavior_get(memcache, MEMCACHED_BEHAVIOR_KETAMA_COMPAT))>-1) {
-        if(value==MEMCACHED_KETAMA_COMPAT_LIBMEMCACHED) lua_pushstring(L, "compat");
-        if(value==MEMCACHED_KETAMA_COMPAT_SPY)          lua_pushstring(L, "compat_spy");
-      } else {
-        lua_pushstring(L, "none");
-      }
+    switch(value) {
+      case MEMCACHED_DISTRIBUTION_MODULA:                lua_pushstring(L, "modula");     break;
+      case MEMCACHED_DISTRIBUTION_CONSISTENT:            lua_pushstring(L, "consistent"); break;
+      case MEMCACHED_DISTRIBUTION_CONSISTENT_KETAMA:     lua_pushstring(L, "ketama");     break;
+      case MEMCACHED_DISTRIBUTION_RANDOM:                lua_pushstring(L, "random");     break;
+      case MEMCACHED_DISTRIBUTION_CONSISTENT_KETAMA_SPY: lua_pushstring(L, "spy");        break;
+      case MEMCACHED_DISTRIBUTION_CONSISTENT_MAX:        lua_pushstring(L, "max");        break;
+      default:
+        value = memcached_behavior_get(memcache, MEMCACHED_BEHAVIOR_KETAMA_WEIGHTED);
+        if(value>-1)
+          lua_pushstring(L, "weighted");
+        else         
+          lua_pushstring(L, "none");
+        break;
     }
   } else {
     lua_pushnil(L);
@@ -251,7 +263,7 @@ static void add_behaviors(lua_State *L, memcached_st *memcache, memcached_return
     if(STRCMP(key, "use_binary"))      behavior = MEMCACHED_BEHAVIOR_BINARY_PROTOCOL;
     if(STRCMP(key, "use_udp"))         behavior = MEMCACHED_BEHAVIOR_USE_UDP;
     if(STRCMP(key, "no_block"))        behavior = MEMCACHED_BEHAVIOR_NO_BLOCK;
-    if(STRCMP(key, "keepalive"))       behavior = MEMCACHED_BEHAVIOR_KEEPALIVE;
+    if(STRCMP(key, "keepalive"))       behavior = MEMCACHED_BEHAVIOR_TCP_KEEPALIVE;
     if(STRCMP(key, "enable_cas"))      behavior = MEMCACHED_BEHAVIOR_SUPPORT_CAS;
     if(STRCMP(key, "tcp_nodelay"))     behavior = MEMCACHED_BEHAVIOR_TCP_NODELAY;
     if(STRCMP(key, "no_reply"))        behavior = MEMCACHED_BEHAVIOR_NOREPLY;
@@ -259,7 +271,7 @@ static void add_behaviors(lua_State *L, memcached_st *memcache, memcached_return
     if(STRCMP(key, "receive_timeout")) behavior = MEMCACHED_BEHAVIOR_RCV_TIMEOUT;
     if(STRCMP(key, "connect_timeout")) behavior = MEMCACHED_BEHAVIOR_CONNECT_TIMEOUT;
     if(STRCMP(key, "poll_timeout"))    behavior = MEMCACHED_BEHAVIOR_POLL_TIMEOUT;
-    if(STRCMP(key, "keepalive_idle"))  behavior = MEMCACHED_BEHAVIOR_KEEPALIVE_IDLE;
+    if(STRCMP(key, "keepalive_idle"))  behavior = MEMCACHED_BEHAVIOR_TCP_KEEPIDLE;
     if(STRCMP(key, "retry_timeout"))   behavior = MEMCACHED_BEHAVIOR_RETRY_TIMEOUT;
 
     // value should be number or boolean
@@ -283,15 +295,19 @@ static void add_behaviors(lua_State *L, memcached_st *memcache, memcached_return
       val = MEMCACHED_HASH_DEFAULT;
       if(STRCMP(vx, "md5"))      val = MEMCACHED_HASH_MD5;
       if(STRCMP(vx, "crc"))      val = MEMCACHED_HASH_CRC;
-      if(STRCMP(vx,"fnv1_64"))   val = MEMCACHED_HASH_FNV1_64;
+      if(STRCMP(vx, "fnv1_64"))  val = MEMCACHED_HASH_FNV1_64;
       if(STRCMP(vx, "fnv1a_64")) val = MEMCACHED_HASH_FNV1A_64;
       if(STRCMP(vx, "fnv1_32"))  val = MEMCACHED_HASH_FNV1_32;
       if(STRCMP(vx, "fnv1a_32")) val = MEMCACHED_HASH_FNV1A_32;
       if(STRCMP(vx, "jenkins"))  val = MEMCACHED_HASH_JENKINS;
       if(STRCMP(vx, "hsieh"))    val = MEMCACHED_HASH_HSIEH;
       if(STRCMP(vx, "murmur"))   val = MEMCACHED_HASH_MURMUR;
+      if(STRCMP(vx, "murmur3"))  val = MEMCACHED_HASH_MURMUR3;
 
-      if(STRCMP(key, "ketama_hash") && (STRCMP(vx, "jenkins") || STRCMP(vx, "hsieh") || STRCMP(vx, "murmur")))
+      if(
+        STRCMP(key, "ketama_hash") && 
+        (STRCMP(vx, "jenkins") || STRCMP(vx, "hsieh") || STRCMP(vx, "murmur") || STRCMP(vx, "murmur3"))
+      )
         val = MEMCACHED_HASH_DEFAULT;
 
       *status = memcached_behavior_set(
@@ -307,19 +323,11 @@ static void add_behaviors(lua_State *L, memcached_st *memcache, memcached_return
       val      = MEMCACHED_DISTRIBUTION_MODULA;
       if(STRCMP(vx, "modula"))     val = MEMCACHED_DISTRIBUTION_MODULA;
       if(STRCMP(vx, "consistent")) val = MEMCACHED_DISTRIBUTION_CONSISTENT;
-      if(STRCMP(vx, "weighted")) {
-        val      = 1;
-        behavior = MEMCACHED_BEHAVIOR_KETAMA_WEIGHTED;
-      }
-      if(STRCMP(vx, "compat")) {
-        val      = MEMCACHED_KETAMA_COMPAT_LIBMEMCACHED;
-        behavior = MEMCACHED_BEHAVIOR_KETAMA_COMPAT;
-      }
-      if(STRCMP(vx, "compat_spy")) {
-        val      = MEMCACHED_KETAMA_COMPAT_SPY;
-        behavior = MEMCACHED_BEHAVIOR_KETAMA_COMPAT;
-      }
-      
+      if(STRCMP(vx, "ketama"))     val = MEMCACHED_DISTRIBUTION_CONSISTENT_KETAMA;
+      if(STRCMP(vx, "random"))     val = MEMCACHED_DISTRIBUTION_RANDOM;
+      if(STRCMP(vx, "spy"))        val = MEMCACHED_DISTRIBUTION_CONSISTENT_KETAMA_SPY;
+      if(STRCMP(vx, "max"))        val = MEMCACHED_DISTRIBUTION_CONSISTENT_MAX;
+      if(STRCMP(vx, "weighted"))   val = 1; behavior = MEMCACHED_BEHAVIOR_KETAMA_WEIGHTED;
       if(behavior != -1)
         *status = memcached_behavior_set(memcache, behavior, val);
     }
@@ -332,32 +340,68 @@ static void add_behaviors(lua_State *L, memcached_st *memcache, memcached_return
 static int save(lua_State *L, enum storage_type type) {
   memcached_st     *memcache = luaL_checkudata(L, 1, LUA_LIBMEMCACHED);
   time_t           ttl       = 0;
-  int              stack     = 1;
+  int              x         = 0;
   memcached_return status;
   uint64_t cas;
   size_t k_len, v_len;
   const char *k, *v;
+  LIBMEMCACHED_API
+  memcached_return_t (*strategy)(memcached_st *, const char *, size_t, const char *, size_t, time_t, uint32_t);
 
-  if(type == CAS)
-    cas = luaL_checklong(L, ++stack);
-  
-  k = luaL_checklstring(L, ++stack, &k_len);
-  v = luaL_checklstring(L, ++stack, &v_len);
+  if(type == CAS) {
+    cas = luaL_checklong(L, 1);
+    k   = luaL_checklstring(L, 2, &k_len);
+    v   = luaL_checklstring(L, 3, &v_len);
+    if(lua_gettop(L) > 3)
+      ttl = luaL_checkint(L, 4);
+    status = memcached_cas(memcache, k, k_len, v, v_len, ttl, (uint32_t)0, cas);
 
-  if(lua_gettop(L) > stack)
-    ttl = luaL_checkint(L, ++stack);
+    if (status != MEMCACHED_SUCCESS) {
+      lua_pushboolean(L, 0);
+      lua_pushstring(L, memcached_strerror(memcache, status));
+      return 2;
+    }
+
+    lua_pushboolean(L, 1);
+    return 1;
+  }
 
   switch(type) {
-    case ADD:     status = memcached_add(memcache, k, k_len, v, v_len, ttl, (uint32_t)0);      break;
-    case SET:     status = memcached_set(memcache, k, k_len, v, v_len, ttl, (uint32_t)0);      break;
-    case REPLACE: status = memcached_replace(memcache, k, k_len, v, v_len, ttl, (uint32_t)0);  break;
-    case CAS:     status = memcached_cas(memcache, k, k_len, v, v_len, ttl, (uint32_t)0, cas); break;
-    case APPEND:  status = memcached_append(memcache, k, k_len, v, v_len, ttl, (uint32_t)0);   break;
-    case PREPEND: status = memcached_prepend(memcache, k, k_len, v, v_len, ttl, (uint32_t)0);  break;
+    case ADD:     strategy = &memcached_add;     break;
+    case SET:     strategy = &memcached_set;     break;
+    case REPLACE: strategy = &memcached_replace; break;
+    case APPEND:  strategy = &memcached_append;  break;
+    case PREPEND: strategy = &memcached_prepend; break;
     default:
       lua_pushboolean(L, 0);
       return 1;
-      break;
+  }
+
+  if(lua_type(L, 2) == LUA_TTABLE) {
+    int bt_flag = 0;
+    if(lua_gettop(L) > 2)
+      ttl = luaL_checkint(L, 3);
+
+    should_buffer(memcache, &bt_flag);
+
+    lua_pushnil(L);
+    while(lua_next(L, 2) != 0) {
+      k = lua_tolstring(L, -2, &k_len);
+      v = lua_tolstring(L, -1, &v_len);
+      (*strategy)(memcache, k, k_len, v, v_len, ttl, (uint32_t)0);
+
+      lua_pop(L, 1);
+    }
+    status = memcached_flush_buffers(memcache);
+    should_buffer(memcache, &bt_flag);
+
+  } else {
+    k = luaL_checklstring(L, 2, &k_len);
+    v = luaL_checklstring(L, 3, &v_len);
+    if(lua_gettop(L) > 3)
+      ttl = luaL_checkint(L, 4);
+
+    status = (*strategy)(memcache, k, k_len, v, v_len, ttl, (uint32_t)0);
   }
 
   if (status != MEMCACHED_SUCCESS) {
@@ -388,7 +432,6 @@ static int operation(lua_State *L, enum operation_type type) {
     default:
       lua_pushnil(L);
       return 1;
-      break;
   }
 
   if (status != MEMCACHED_SUCCESS) {
@@ -431,7 +474,6 @@ static int memc_add_server(lua_State *L) {
 static int memc_set_behavior(lua_State *L) {
   memcached_st     *memcache = luaL_checkudata(L, 1, LUA_LIBMEMCACHED);
   memcached_return status;
-  log_me("set_behavior");
 
   // change stack
   lua_pushvalue(L, -1);
@@ -452,7 +494,6 @@ static int memc_set_behavior(lua_State *L) {
 static int memc_get_behavior(lua_State *L) {
   memcached_st *memcache = luaL_checkudata(L, 1, LUA_LIBMEMCACHED);
   const char   *const_name;
-  log_me("get_behavior");
 
   switch(lua_type(L, 2)) {
     case LUA_TTABLE: 
@@ -488,7 +529,7 @@ static int memc_set(lua_State *L) {
   return save(L, (s_type = SET));
 }
 
-static int memc_replace(lua_State *L) { 
+static int memc_replace(lua_State *L) {
   return save(L, (s_type = REPLACE));
 }
 
@@ -512,24 +553,123 @@ static int memc_decr(lua_State *L) {
   return operation(L, (o_type = DECREMENT));
 }
 
-static int memc_append_multi(lua_State *L) { return 0; }
-
-static int memc_prepend_multi(lua_State *L) { return 0; }
-
-static int memc_check_key(lua_State *L) { return 0; }
-
-static int memc_set_multi(lua_State *L) { return 0; }
-
-static int memc_delete(lua_State *L) { return 0; }
-
-static int memc_delete_multi(lua_State *L) { return 0; }
-
 static int memc_get(lua_State *L) {
-  return 0;
+  memcached_st     *memcache = luaL_checkudata(L, 1, LUA_LIBMEMCACHED);
+  memcached_return status;
+  uint32_t         flags;
+  size_t           len, r_v_len;
+  const char       *k;
+  char             *r_v;
+
+  switch(lua_type(L, 2)) {
+    case LUA_TTABLE:
+      {
+        size_t     r_k_len, *k_len, n = luaL_getn(L, 2);
+        const char *ks[n];
+        char       r_k[MEMCACHED_MAX_KEY];
+
+        k_len = malloc(n * sizeof *k_len);
+        n     = -1;
+
+        lua_pushnil(L);
+        while(lua_next(L, 2) != 0) {
+          if(lua_type(L, -1) == LUA_TSTRING) {
+            k        = lua_tolstring(L, -1, &len);
+            ks[++n]  = (char*)malloc(len+1 * sizeof(char *));
+            k_len[n] = len;
+            *((char *) mempcpy ((char *)ks[n], k, len)) = '\0';
+          }
+          lua_pop(L, 1);
+        }
+        ++n;
+
+        status = memcached_mget(memcache, ks, k_len, n);
+        lua_newtable(L);
+        if(status == MEMCACHED_SUCCESS) {
+          while((r_v = memcached_fetch(memcache, r_k, &r_k_len, &r_v_len, &flags, &status)) != NULL) {
+
+            lua_pushlstring(L, r_k, r_k_len);
+
+            if(status == MEMCACHED_SUCCESS)
+              lua_pushlstring(L, r_v, r_v_len);
+            else
+              lua_pushnil(L);
+
+            lua_settable(L, 3);
+          }
+        }
+      }
+      return 1;
+    case LUA_TSTRING:
+      k   = lua_tolstring(L, 2, &len);
+      r_v = memcached_get(memcache, k, len, &r_v_len, &flags, &status);
+      if(status == MEMCACHED_SUCCESS)
+        lua_pushlstring(L, r_v, r_v_len);
+      else
+        lua_pushnil(L);
+      break;
+    default:
+      return luaL_error(L, "argument must be string or table");
+  }
+
+  return 1;
 }
 
-static int memc_get_multi(lua_State *L) { return 0; }
+static int memc_delete(lua_State *L) {
+  memcached_st     *memcache = luaL_checkudata(L, 1, LUA_LIBMEMCACHED);
+  memcached_return status;
+  time_t           ttl = 0;
+  size_t           k_len;
+  const char       *k;
+  int              bt_flag = 0;
 
+  if(lua_gettop(L)>2)
+    ttl = luaL_checkint(L, 3);
+
+  switch(lua_type(L, 2)) {
+    case LUA_TTABLE:
+      should_buffer(memcache, &bt_flag);
+      
+      lua_pushnil(L);
+      while(lua_next(L, 2) != 0) {
+        if(lua_type(L, -1) == LUA_TSTRING) {
+          k      = lua_tolstring(L, -1, &k_len);
+          memcached_delete(memcache, k, k_len, ttl);
+        }
+      }
+      
+      status = memcached_flush_buffers(memcache);
+      should_buffer(memcache, &bt_flag);
+      lua_pushboolean(L, (status==MEMCACHED_SUCCESS ? 1 : 0));
+
+      break;
+    case LUA_TSTRING:
+      k      = lua_tolstring(L, 2, &k_len);
+      status = memcached_delete(memcache, k, k_len, ttl);
+      lua_pushboolean(L, (MEMCACHED_SUCCESS==status ? 1 : 0));
+      break;
+    default:
+      return luaL_error(L, "argument must be string or table");
+  }
+  return 1;
+}
+
+static int memc_check_key(lua_State *L) {
+  if(lua_gettop(L) > 1 && lua_isstring(L, 2)) {
+    size_t     len;
+    const char *key = lua_tolstring(L, 2, &len);
+    if(MEMCACHED_MAX_KEY < len) {
+      lua_pushboolean(L, 0);
+      lua_pushstring(L, "key is greater than memcached limit");
+      return 2;
+    }
+
+    lua_pushboolean(L, 1);
+  } else {
+    luaL_error(L, "argument must be a string");
+  }
+  return 1;
+}
 
 //
 static int memc_free(lua_State *L) {
@@ -547,7 +687,19 @@ static int memc_new(lua_State *L) {
   memcache = lua_newuserdata(L, sizeof(struct memcached_st));
   memcache = memcached_create(memcache);
 
-  add_servers(L, memcache, &status);
+  // preset
+  status = memcached_behavior_set(memcache, MEMCACHED_BEHAVIOR_VERIFY_KEY, 1);
+
+  if(MEMCACHED_SUCCESS != status)
+    status = memcached_behavior_set(memcache, MEMCACHED_BEHAVIOR_BINARY_PROTOCOL, 1);
+
+  // use murmur3/murmur if multiple servers
+  if(MEMCACHED_SUCCESS != status && lua_type(L, 1)==LUA_TTABLE) {
+    if(-1 != MEMCACHED_HASH_MURMUR3)
+      status = memcached_behavior_set(memcache, MEMCACHED_BEHAVIOR_HASH, MEMCACHED_HASH_MURMUR3);
+    else
+      status = memcached_behavior_set(memcache, MEMCACHED_BEHAVIOR_HASH, MEMCACHED_HASH_MURMUR);
+  }
 
   if (status != MEMCACHED_SUCCESS) {
     lua_pushnil(L);
@@ -555,7 +707,15 @@ static int memc_new(lua_State *L) {
     return 2;
   }
 
-  if(lua_gettop(L)>2 && lua_istable(L, 2)) {
+  // check for behavior(s)
+  if(lua_gettop(L)>1 && (lua_type(L, 2)==LUA_TTABLE || lua_type(L, 3)==LUA_TTABLE)) {
+    lua_pushvalue(L, 1);
+    if(lua_type(L, 2)==LUA_TTABLE)
+      lua_pushvalue(L, 2);
+    else
+      lua_pushvalue(L, 3);
+
+    lua_replace(L, 1);
     add_behaviors(L, memcache, &status);
 
     if (status != MEMCACHED_SUCCESS) {
@@ -563,6 +723,16 @@ static int memc_new(lua_State *L) {
       lua_pushstring(L, memcached_strerror(memcache, status));
       return 2;
     }
+
+    lua_replace(L, 1);
+  }
+  
+  add_servers(L, memcache, &status);
+
+  if (status != MEMCACHED_SUCCESS) {
+    lua_pushnil(L);
+    lua_pushstring(L, memcached_strerror(memcache, status));
+    return 2;
   }
 
   luaL_getmetatable(L, LUA_LIBMEMCACHED);
@@ -596,7 +766,7 @@ LUALIB_API int luaopen_libmemcached(lua_State *L) {
 
   lua_set_sconst(L, "BEER-WARE", "_COPYRIGHT");
   lua_set_sconst(L, "Lua binding to libmemcached", "_DESCRIPTION");
-  lua_set_sconst(L, "0.1a", "_VERSION");
+  lua_set_sconst(L, "0.1b", "_VERSION");
   lua_set_sconst(L, LIBMEMCACHED_VERSION_STRING, "_LIBVERSION");
 
   return 1;
