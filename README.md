@@ -1,6 +1,6 @@
 # summary
 
-lua-libmemcached is a simple [Lua](http://www.lua.org/) binding for [libmemcached](http://libmemcached.org/).
+lua-libmemcached is a simple [Lua](http://www.lua.org/) binding for [libmemcached](http://bit.ly/libmemcached).
 
 # help and support
 
@@ -8,11 +8,11 @@ please fill an issue or help it doing a clone and then a pull request.
 
 # license
 
-[BEER-WARE](http://en.wikipedia.org/wiki/Beerware), see source
+[BEER-WARE](http://bit.ly/b33rw4r3), see source
 
 # prerequisites
 
-+ [libmemcached](http://libmemcached.org/) (of course) 
++ [libmemcached](http://bit.ly/libmemcached) (of course) 
 + [Lua](http://www.lua.org/) ([Luajit](http://luajit.org/))
 + [gcc](http://gcc.gnu.org/) and [make](http://www.gnu.org/software/make/) ([min-gw32](http://sourceforge.net/projects/mingw/files/MinGW/) on windows)
 + [upx](http://upx.sourceforge.net/) (optional)
@@ -35,156 +35,165 @@ for cleanup
 
 ```lua
 
-local memc = require('lua-libmemcached')
+--[[
+  
+  behavior*  = further reading http://bit.ly/b3h4v1or
+  ttl*/time* = (time to live) in seconds, optional, default 0 (indeterminate)
+  ttl**      = (time to live) in seconds, optional, default 0 (no changes last ttl)
+  offset*    = value offset, optional, default 1
+  **         = for async callback pass a function as last argument
 
--- constants ...
--- behavior, further reading http://bit.ly/157qEcD
---[[
-memc.BEHAVIOR_NO_BLOCK
-memc.BEHAVIOR_TCP_NODELAY
-memc.BEHAVIOR_HASH
-memc.BEHAVIOR_KETAMA
-memc.BEHAVIOR_SOCKET_SEND_SIZE
-memc.BEHAVIOR_SOCKET_RECV_SIZE
-memc.BEHAVIOR_CACHE_LOOKUPS
-memc.BEHAVIOR_SUPPORT_CAS
-memc.BEHAVIOR_POLL_TIMEOUT
-memc.BEHAVIOR_DISTRIBUTION
-memc.BEHAVIOR_BUFFER_REQUESTS
-memc.BEHAVIOR_USER_DATA
-memc.BEHAVIOR_SORT_HOSTS
-memc.BEHAVIOR_VERIFY_KEY
-memc.BEHAVIOR_CONNECT_TIMEOUT
-memc.BEHAVIOR_RETRY_TIMEOUT
-memc.BEHAVIOR_KETAMA_WEIGHTED
-memc.BEHAVIOR_KETAMA_HASH
-memc.BEHAVIOR_BINARY_PROTOCOL
-memc.BEHAVIOR_SND_TIMEOUT
-memc.BEHAVIOR_RCV_TIMEOUT
-memc.BEHAVIOR_SERVER_FAILURE_LIMIT
-memc.BEHAVIOR_IO_MSG_WATERMARK
-memc.BEHAVIOR_IO_BYTES_WATERMARK
-memc.BEHAVIOR_IO_KEY_PREFETCH
-memc.BEHAVIOR_HASH_WITH_PREFIX_KEY
-memc.BEHAVIOR_NOREPLY
-memc.BEHAVIOR_USE_UDP
-memc.BEHAVIOR_AUTO_EJECT_HOSTS
-memc.BEHAVIOR_NUMBER_OF_REPLICAS
-memc.BEHAVIOR_RANDOMIZE_REPLICA_READ
-memc.BEHAVIOR_CORK
-memc.BEHAVIOR_TCP_KEEPALIVE
-memc.BEHAVIOR_TCP_KEEPIDLE
-memc.BEHAVIOR_MAX
---]]
--- server distribution
---[[
-memc.DISTRIBUTION_MODULA
-memc.DISTRIBUTION_CONSISTENT
-memc.DISTRIBUTION_CONSISTENT_KETAMA
-memc.DISTRIBUTION_RANDOM
-memc.DISTRIBUTION_CONSISTENT_KETAMA_SPY
-memc.DISTRIBUTION_CONSISTENT_MAX
---]]
--- hash
---[[
-memc.HASH_DEFAULT
-memc.HASH_MD5
-memc.HASH_CRC
-memc.HASH_FNV1_64
-memc.HASH_FNV1A_64
-memc.HASH_FNV1_32
-memc.HASH_FNV1A_32
-memc.HASH_HSIEH
-memc.HASH_MURMUR
-memc.HASH_JENKINS
-memc.HASH_CUSTOM
-memc.HASH_MAX
---]]
--- connection
---[[
-memc.CONNECTION_UNKNOWN
-memc.CONNECTION_TCP
-memc.CONNECTION_UDP
-memc.CONNECTION_UNIX_SOCKET
-memc.CONNECTION_MAX
 --]]
 
--- new instance with host/port address(es) and behavior(s), all optional, could raise error
-local n_memc = memc.new(
-                  'localhost:11211' or {10.1.1.66:11211', '10.1.1.69:11211'}, 
-                  {memc.BEHAVIOR_TCP_NODELAY, {memc.BEHAVIOR_POLL_TIMEOUT, 10000}, ...}
-                )
+-- useful variables
+local memc, inst, behavior, value, cas_token
+local key, value, key2, value2, n_key =
+      'foo', 'bar', 'fizz', 'buzz', 'rubber_duck'
 
--- add server(s), true if successful
-n_memc:add_server('localhost:11211' or {10.1.1.66:11211', '10.1.1.69:11211'})
+memc = require 'lua-libmemcached'
 
--- set behavior(s), true if sucessful, could raise error
-n_memc:set_behavior(
-    memc.BEHAVIOR_TCP_NODELAY or {memc.BEHAVIOR_TCP_NODELAY, false} or
-     {{memc.BEHAVIOR_DISTRIBUTION, memc.DISTRIBUTION_RANDOM}, {memc.BEHAVIOR_HASH, memc.HASH_CRC}}
+-- new "libmemcached", arguments are optional, return false unless successful.
+-- arguments: host/host:ip/unix socket/table of..., port/behavior(s)*
+inst = memc.new(
+    '127.0.0.1' or 'localhost:11211' or {'localhost:11211', {'10.1.1.66', 11211}},
+    11211 or {"use_udp", no_block=true, distribution='consistent'}
   )
 
--- get behavior value, could raise error
-local behavior = n_memc:get_behavior(memc.BEHAVIOR_DISTRIBUTION)
 
--- add a key/value/ttl/compression, returns true if successful
--- * ttl (optional, default 0) and compression (optional, uses lz4, default false)
-n_memc:add(key, value, 3600 or 0, false or true)
+-- add server(s)/port, port are optional, return true if successful.
+inst:add_server(
+    '10.1.1.66' or 'localhost:11211' or {'10.1.1.69:11211', {'10.1.1.69', 11212}},
+    11211
+  )
 
--- stores a value in given key with ttl/compression, returns true if sucessful
--- * ttl and compression are optional
-n_memc:set(key, value, 7200 or 0, false or true)
 
--- get value, cas token by key, returns false if not successful
-local value, cas_token = n_memc:get(key)
+-- set behavior(s)* flag, flag are optional, return true if successful.
+inst:set_behavior(
+    'tcp_nodelay' or {"enable_cas", use_binary=true}, false
+  )
 
--- replace a value/ttl/compression in given key, returns true if successful.
+
+-- get behavior(s)* value, return table/value if successful.
+behavior = inst:get_behavior('ketama_hash' or {"distribution", 'no_block'})
+
+
+-- add a key(s) with value(s), ttl*, returns true if successful. **
+inst:add(key or {[key]=value, [key2]=value2}, value, 3600 or 0)
+
+
+-- stores a value(s) in given key(s) with ttl*, returns true if successful. **
+inst:set(key or {[key2]=value2, [key]=value}, value, 7200 or 0)
+
+
+-- get value(s), cas token by key, returns false if not successful. **
+local value, cas_token = inst:get(key or {key, key2})
+
+
+-- replace a value(s), ttl* in given key(s), returns true if successful. **
 -- same as set, but fails if the key does not exist on the server
-n_memc:replace(key, value, 7200 or 0, false or true)
+inst:replace(key or {[key2]=value2, [key]=value}, value, 7200 or 0)
 
--- compare and swap a key with value/ttl/compression, returns true if successful.
--- * ttl and compression are optional
-n_memc:cas(cas_token, key, value, 86400 or 0, false or true)
 
--- appends data to existing value, returns true if successful
--- warning, appending value to an already compressed value is not possible.
-n_memc:append(key, value)
+-- compare and swap a key with value/ttl*, returns true if successful. **
+inst:cas(cas_token, key, value, 86400 or 0)
 
--- prepends data to existing value, returns true if successful
--- warning, prepending value to an already compressed value is not possible.
-n_memc:prepend(key, value)
 
--- delete key or delete with delayed time, returns true if successful
-n_memc:delete(key, 60 or 0)
+-- appends data to value(s) in a given key(s), returns true if successful. **
+inst:append(key or {[key]=value, [key2]=value2}, value)
 
--- increments value of a given key, optional offset (default 1) and ttl (default 0/no change)
--- returns new value of false if not successful
-n_memc:incr(key, 10 or 1, 1800 or 0)
 
--- decrements value of a given key, optional offset (default 1) and ttl (default 0/no change)
--- returns new value of false if not successful
-n_memc:decr(key, 10 or 1, 1800 or 0)
+-- prepends data to value(s) in a given key(s), returns true if successful. **
+inst:prepend(key or {[key2]=value2, [key]=value}, value)
 
--- same as set, now with multiple key, value pairs
-n_memc:set_multi({key = value, key2 = value2, ...})
 
--- same as get, noew with multiple keys, returns a table with key, value pairs
-n_memc:get_multi({key, key2, ...})
+-- delete key(s) or delete with delayed time*, returns true if successful. **
+inst:delete(key or {[key]=value, [key2]=value2}, 60 or 0)
 
--- same as delete, now with multiple keys, returns true if successful
-n_memc:delete_multi({key, key2, ...}, 1800 or 0)
 
--- same as append, now with multiple key, value pairs
-n_memc:append_multi({key = value, key2 = value2, ...})
+-- increments value of a key with offset* and ttl** **
+-- returns new value or false if not successful.
+inst:incr(n_key, 10 or 1, 1800 or 0)
 
--- same as prepend, now with multiple key, value pairs
-n_memc:prepend_multi({key = value, key2 = value2, ...})
 
--- safe key checksum, return false/true and string with message in case of error
-local checksum, err_str = n_memc:check_key("klklksasas8989889asasauhauhauha")
+-- decrements value of a key with offset* and ttl** **
+-- returns new value or false if not successful.
+inst:decr(n_key, 10 or 1, 1800 or 0)
 
+-- safe key checksum, returns false/true and string with message if error. **
+local checksum, err_str = inst:check_key(key2)
 
 ``` 
+
+# behaviors
+
+check the links below to more understanding on each subject.
+
+## optional
+
+**[use_binary](http://bit.ly/b3h4v1or#MEMCACHED_BEHAVIOR_BINARY_PROTOCOL)**: *boolean*, default true.
+
+**[use_udp](http://bit.ly/b3h4v1or#MEMCACHED_BEHAVIOR_USE_UDP)**: *boolean*.
+
+**[no_block](http://bit.ly/b3h4v1or#MEMCACHED_BEHAVIOR_NO_BLOCK)**: *boolean*.
+
+**[keepalive](http://bit.ly/b3h4v1or#MEMCACHED_BEHAVIOR_KEEPALIVE)**: *boolean*.
+
+**[enable_cas](http://bit.ly/b3h4v1or#MEMCACHED_BEHAVIOR_SUPPORT_CAS)**: *boolean*.
+
+**[tcp_nodelay](http://bit.ly/b3h4v1or#MEMCACHED_BEHAVIOR_TCP_NODELAY)**: *boolean*.
+
+**[no_reply](http://bit.ly/b3h4v1or#MEMCACHED_BEHAVIOR_NOREPLY)**: *boolean*.
+
+**[send_timeout](http://bit.ly/b3h4v1or#MEMCACHED_BEHAVIOR_SND_TIMEOUT)**: in microseconds.
+
+**[receive_timeout](http://bit.ly/b3h4v1or#MEMCACHED_BEHAVIOR_RCV_TIMEOUT)** in microseconds.
+
+**[connect_timeout](http://bit.ly/b3h4v1or#MEMCACHED_BEHAVIOR_CONNECT_TIMEOUT)** in microseconds.
+
+**[poll_timeout](http://bit.ly/b3h4v1or#MEMCACHED_BEHAVIOR_POLL_TIMEOUT)** in seconds? - default -1.
+
+**[keepalive_idle](http://bit.ly/b3h4v1or#MEMCACHED_BEHAVIOR_KEEPALIVE_IDLE)** in seconds, linux only.
+
+**[retry_timeout](http://bit.ly/b3h4v1or#MEMCACHED_BEHAVIOR_RETRY_TIMEOUT)** in seconds.
+
+**[hash](http://bit.ly/b3h4v1or#MEMCACHED_BEHAVIOR_HASH)**: 
+  *[md5](http://bit.ly/h4sh3z#MEMCACHED_HASH_MD5)*,
+  *[crc](http://bit.ly/h4sh3z#MEMCACHED_HASH_CRC)*,
+  *[fnv1_64](http://bit.ly/h4sh3z#MEMCACHED_HASH_FNV1_64)*,
+  *[fnv1a_64](http://bit.ly/h4sh3z#MEMCACHED_HASH_FNV1A_64)*,
+  *[fnv1_32](http://bit.ly/h4sh3z#MEMCACHED_HASH_FNV1_32)*,
+  *[fnv1a_32](http://bit.ly/h4sh3z#MEMCACHED_HASH_FNV1A_32)*,
+  *[jenkins](http://bit.ly/h4sh3z#MEMCACHED_HASH_JENKINS)*,
+  *[hsieh](http://bit.ly/h4sh3z#MEMCACHED_HASH_HSIEH)*,
+  *[murmur](http://bit.ly/h4sh3z#MEMCACHED_HASH_MURMUR)*,
+  *[murmur3](http://bit.ly/h4sh3z#MEMCACHED_HASH_MURMUR3)* and
+  *[default](http://bit.ly/h4sh3z#MEMCACHED_HASH_DEFAULT)*
+
+**[ketama_hash](http://bit.ly/b3h4v1or#MEMCACHED_BEHAVIOR_KETAMA_HASH)**: 
+  *[md5](http://bit.ly/h4sh3z#MEMCACHED_HASH_MD5)*,
+  *[crc](http://bit.ly/h4sh3z#MEMCACHED_HASH_CRC)*,
+  *[fnv1_64](http://bit.ly/h4sh3z#MEMCACHED_HASH_FNV1_64)*,
+  *[fnv1a_64](http://bit.ly/h4sh3z#MEMCACHED_HASH_FNV1A_64)*,
+  *[fnv1_32](http://bit.ly/h4sh3z#MEMCACHED_HASH_FNV1_32)*,
+  *[fnv1a_32](http://bit.ly/h4sh3z#MEMCACHED_HASH_FNV1A_32)* and
+  *[default](http://bit.ly/h4sh3z#MEMCACHED_HASH_DEFAULT)*
+
+**[distribution](http://bit.ly/b3h4v1or#MEMCACHED_BEHAVIOR_DISTRIBUTION)**: 
+  *[modula](http://bit.ly/b3h4v1or#MEMCACHED_BEHAVIOR_DISTRIBUTION)*,
+  *[consistent](http://bit.ly/b3h4v1or#MEMCACHED_BEHAVIOR_DISTRIBUTION)*,
+  *[weighted](http://bit.ly/b3h4v1or#MEMCACHED_BEHAVIOR_KETAMA_WEIGHTED)*,
+  *[compat](http://bit.ly/b3h4v1or#MEMCACHED_BEHAVIOR_KETAMA_COMPAT)* and
+  *[compat_spy](http://bit.ly/b3h4v1or#MEMCACHED_BEHAVIOR_KETAMA_COMPAT)*
+
+## preset
+
+**[MEMCACHED_BEHAVIOR_VERIFY_KEY](http://bit.ly/b3h4v1or#MEMCACHED_BEHAVIOR_VERIFY_KEY)**
+
+**[MEMCACHED_BEHAVIOR_HASH](http://bit.ly/b3h4v1or#MEMCACHED_BEHAVIOR_HASH)**: 
+  **[MEMCACHED_HASH_MURMUR](http://bit.ly/h4sh3z#MEMCACHED_HASH_MURMUR)**, (if murmur3 is unavailable) 
+  **[MEMCACHED_HASH_MURMUR3](http://bit.ly/h4sh3z#MEMCACHED_HASH_MURMUR3)**
+
+**[MEMCACHED_BEHAVIOR_BINARY_PROTOCOL](http://bit.ly/b3h4v1or#MEMCACHED_BEHAVIOR_BINARY_PROTOCOL)**
 
 # tests
 
@@ -192,8 +201,9 @@ see test.lua ...
 
 # TODO
 
++ support callbacks
 + support luvit module style
 + create a test suite
 + improve makefile
 
-% July 21th, 2013 -03 GMT
+% August 04th, 2013 -03 GMT

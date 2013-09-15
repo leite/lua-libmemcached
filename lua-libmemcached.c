@@ -14,43 +14,36 @@
 #include <lua.h>
 #include <lauxlib.h>
 #include <lualib.h>
-#include "lua-libmemcached.h"
 
-//
-const struct luaL_reg methods[] = {
-  {"add_server",   &memc_add_server},
-  {"set_behavior", &memc_set_behavior},
-  {"get_behavior", &memc_get_behavior},
-  {"add",          &memc_add},
-  {"replace",      &memc_replace},
-  {"cas",          &memc_cas},
-  {"append",       &memc_append},
-  {"prepend",      &memc_prepend},
-  {"check_key",    &memc_check_key},
-  {"set",          &memc_set},
-  {"delete",       &memc_delete},
-  {"get",          &memc_get},
-  {"incr",         &memc_incr},
-  {"decr",         &memc_decr},
-  {NULL,           NULL}
-};
+#define STRCMP(a,b) (strcmp(a,b) == 0)
 
-//
-const struct luaL_reg metamethods[] = {
-  {"__gc", &memc_free},
-  {NULL,   NULL}
-};
+#ifndef LUA_API
+#define LUA_API __declspec(dllexport)
+#endif
 
-//
-const struct luaL_reg functions[] = {
-  {"new", &memc_new},
-  {NULL,  NULL}
-};
+#if !defined LUA_VERSION_NUM || LUA_VERSION_NUM==501
+#define luaL_setfuncs(L,l,s) luaL_register(L,NULL,l)
+#endif
 
-enum storage_type{ ADD, SET, REPLACE, CAS, APPEND, PREPEND } s_type;
-enum operation_type{ INCREMENT, DECREMENT } o_type;
+#define lua_set_const(L, con, name) {lua_pushnumber(L, con); lua_setfield(L, -2, name);}
+#define lua_set_sconst(L, con, name) {lua_pushstring(L, con); lua_setfield(L, -2, name);}
+#define LUA_LIBMEMCACHED "libmemcached"
 
-// debug only
+#if !defined mempcpy
+void *mempcpy(void *dst, const void *src, size_t len) {
+  return (char *) memcpy(dst, src, len) + len;
+}
+#endif
+
+#if !defined LIBMEMCACHED_VERSION_HEX || LIBMEMCACHED_VERSION_HEX<0x1000015
+#define MEMCACHED_HASH_MURMUR3 -3
+#endif
+
+#if !defined LIBMEMCACHED_VERSION_HEX || LIBMEMCACHED_VERSION_HEX>0x1000002
+#define MEMCACHED_CONNECTION_MAX -6
+#define MEMCACHED_CONNECTION_UNKNOWN -9
+#endif
+
 #ifdef DEBUG
 static void log_me(const char *name) {
   printf("\n >> %s\n", name);
@@ -78,22 +71,25 @@ static void log_me(const char *name) {}
 static void stack_dump(lua_State *L) {}
 #endif
 
-static void should_buffer(memcached_st *memcache, int *bitwise_flag) {
-  memcached_return status;
+//
 
+enum storage_type{ ADD, SET, REPLACE, CAS, APPEND, PREPEND } s_type;
+enum operation_type{ INCREMENT, DECREMENT } o_type;
+
+static void should_buffer(memcached_st *memcache, int *bitwise_flag) {
   if(*bitwise_flag > 0) {
     if((*bitwise_flag & 2))
-      status = memcached_behavior_set(memcache, MEMCACHED_BEHAVIOR_NOREPLY, 0);
+      memcached_behavior_set(memcache, MEMCACHED_BEHAVIOR_NOREPLY, 0);
     if((*bitwise_flag & 4))
-      status = memcached_behavior_set(memcache, MEMCACHED_BEHAVIOR_BUFFER_REQUESTS, 0);
+      memcached_behavior_set(memcache, MEMCACHED_BEHAVIOR_BUFFER_REQUESTS, 0);
   } else {
     *bitwise_flag  = 1;
     *bitwise_flag += ((memcached_behavior_get(memcache, MEMCACHED_BEHAVIOR_NOREPLY)==0) ? 2 : 0);
     *bitwise_flag += ((memcached_behavior_get(memcache, MEMCACHED_BEHAVIOR_BUFFER_REQUESTS)==0) ? 4 : 0);
     if((*bitwise_flag & 2))
-      status = memcached_behavior_set(memcache, MEMCACHED_BEHAVIOR_NOREPLY, 1);
+      memcached_behavior_set(memcache, MEMCACHED_BEHAVIOR_NOREPLY, 1);
     if((*bitwise_flag & 4))
-      status = memcached_behavior_set(memcache, MEMCACHED_BEHAVIOR_BUFFER_REQUESTS, 1);
+      memcached_behavior_set(memcache, MEMCACHED_BEHAVIOR_BUFFER_REQUESTS, 1);
   }
 }
 
@@ -167,7 +163,7 @@ static void add_servers(lua_State *L, memcached_st *memcache, memcached_return *
 }
 
 static void get_behavior(lua_State *L, const char *const_name, memcached_st *memcache) {
-  int behavior = -1;
+  int behavior = -2;
   uint64_t value;
 
   if(STRCMP(const_name, "use_binary"))  behavior = MEMCACHED_BEHAVIOR_BINARY_PROTOCOL;
@@ -177,7 +173,7 @@ static void get_behavior(lua_State *L, const char *const_name, memcached_st *mem
   if(STRCMP(const_name, "enable_cas"))  behavior = MEMCACHED_BEHAVIOR_SUPPORT_CAS;
   if(STRCMP(const_name, "tcp_nodelay")) behavior = MEMCACHED_BEHAVIOR_TCP_NODELAY;
   if(STRCMP(const_name, "no_reply"))    behavior = MEMCACHED_BEHAVIOR_NOREPLY;
-  if(behavior != -1) {
+  if(behavior > -2) {
     value = memcached_behavior_get(memcache, behavior);
     lua_pushboolean(L, value);
     return;
@@ -189,15 +185,15 @@ static void get_behavior(lua_State *L, const char *const_name, memcached_st *mem
   if(STRCMP(const_name, "poll_timeout"))    behavior = MEMCACHED_BEHAVIOR_POLL_TIMEOUT;
   if(STRCMP(const_name, "keepalive_idle"))  behavior = MEMCACHED_BEHAVIOR_TCP_KEEPIDLE;
   if(STRCMP(const_name, "retry_timeout"))   behavior = MEMCACHED_BEHAVIOR_RETRY_TIMEOUT;
-  if(behavior != -1) {
+  if(behavior > -2) {
     value = memcached_behavior_get(memcache, behavior);
     lua_pushnumber(L, value);
     return;
   }
 
-  if(const_name=="hash")        behavior = MEMCACHED_BEHAVIOR_HASH;
-  if(const_name=="ketama_hash") behavior = MEMCACHED_BEHAVIOR_KETAMA_HASH;
-  if(behavior != -1) {
+  if(STRCMP(const_name, "hash"))        behavior = MEMCACHED_BEHAVIOR_HASH;
+  if(STRCMP(const_name, "ketama_hash")) behavior = MEMCACHED_BEHAVIOR_KETAMA_HASH;
+  if(behavior > -2) {
     value = memcached_behavior_get(memcache, behavior);
     switch(value) {
       case MEMCACHED_HASH_MD5:      lua_pushstring(L, "md5");
@@ -218,8 +214,8 @@ static void get_behavior(lua_State *L, const char *const_name, memcached_st *mem
     return;
   }
 
-  if(const_name=="distribution") behavior = MEMCACHED_BEHAVIOR_DISTRIBUTION;
-  if(behavior != -1) {
+  if(STRCMP(const_name, "distribution")) behavior = MEMCACHED_BEHAVIOR_DISTRIBUTION;
+  if(behavior > -2) {
     value = memcached_behavior_get(memcache, behavior);
     switch(value) {
       case MEMCACHED_DISTRIBUTION_MODULA:                lua_pushstring(L, "modula");     break;
@@ -340,7 +336,6 @@ static void add_behaviors(lua_State *L, memcached_st *memcache, memcached_return
 static int save(lua_State *L, enum storage_type type) {
   memcached_st     *memcache = luaL_checkudata(L, 1, LUA_LIBMEMCACHED);
   time_t           ttl       = 0;
-  int              x         = 0;
   memcached_return status;
   uint64_t cas;
   size_t k_len, v_len;
@@ -418,7 +413,7 @@ static int operation(lua_State *L, enum operation_type type) {
   memcached_st     *memcache = luaL_checkudata(L, 1, LUA_LIBMEMCACHED);
   memcached_return status;
   const char       *k;
-  int              v=1;
+  int              v = 1;
   size_t           k_len;
   uint64_t         n_value;
 
@@ -554,65 +549,82 @@ static int memc_decr(lua_State *L) {
 }
 
 static int memc_get(lua_State *L) {
-  memcached_st     *memcache = luaL_checkudata(L, 1, LUA_LIBMEMCACHED);
-  memcached_return status;
-  uint32_t         flags;
-  size_t           len, r_v_len;
-  const char       *k;
-  char             *r_v;
-
+  memcached_st        *memcache = luaL_checkudata(L, 1, LUA_LIBMEMCACHED);
+  memcached_return    status;
+  memcached_result_st *results = NULL;
+  uint64_t   cas;
+  size_t     len, *keys_len, n = 1;
+  const char *k, *key, *value;
+  const char **keys;
+  
   switch(lua_type(L, 2)) {
     case LUA_TTABLE:
-      {
-        size_t     r_k_len, *k_len, n = luaL_getn(L, 2);
-        const char *ks[n];
-        char       r_k[MEMCACHED_MAX_KEY];
+      n        = luaL_getn(L, 2);
+      keys     = malloc(n * sizeof(char *));
+      keys_len = malloc(n * sizeof *keys_len);
 
-        k_len = malloc(n * sizeof *k_len);
-        n     = -1;
-
-        lua_pushnil(L);
-        while(lua_next(L, 2) != 0) {
-          if(lua_type(L, -1) == LUA_TSTRING) {
-            k        = lua_tolstring(L, -1, &len);
-            ks[++n]  = (char*)malloc(len+1 * sizeof(char *));
-            k_len[n] = len;
-            *((char *) mempcpy ((char *)ks[n], k, len)) = '\0';
-          }
-          lua_pop(L, 1);
+      n = -1;
+      lua_pushnil(L);
+      while(lua_next(L, 2) != 0) {
+        if(lua_type(L, -1) == LUA_TSTRING) {
+          k           = lua_tolstring(L, -1, &len);
+          keys[++n]   = malloc((len+1) * sizeof(char *));
+          keys_len[n] = len;
+          *((char *) mempcpy((char*)keys[n], k, len)) = '\0';
         }
-        ++n;
-
-        status = memcached_mget(memcache, ks, k_len, n);
-        lua_newtable(L);
-        if(status == MEMCACHED_SUCCESS) {
-          while((r_v = memcached_fetch(memcache, r_k, &r_k_len, &r_v_len, &flags, &status)) != NULL) {
-
-            lua_pushlstring(L, r_k, r_k_len);
-
-            if(status == MEMCACHED_SUCCESS)
-              lua_pushlstring(L, r_v, r_v_len);
-            else
-              lua_pushnil(L);
-
-            lua_settable(L, 3);
-          }
-        }
+        lua_pop(L, 1);
       }
-      return 1;
+      ++n;
+      break;
     case LUA_TSTRING:
-      k   = lua_tolstring(L, 2, &len);
-      r_v = memcached_get(memcache, k, len, &r_v_len, &flags, &status);
-      if(status == MEMCACHED_SUCCESS)
-        lua_pushlstring(L, r_v, r_v_len);
-      else
-        lua_pushnil(L);
+      keys     = malloc(n * sizeof(char *));
+      keys_len = malloc(n * sizeof *keys_len);
+
+      k           = lua_tolstring(L, -1, &len);
+      keys[0]     = malloc((len+1) * sizeof(char *));
+      keys_len[0] = len;
+      *((char *) mempcpy((char*)keys[0], k, len)) = '\0';
       break;
     default:
-      return luaL_error(L, "argument must be string or table");
+      return luaL_error(L, "parameter should be string or table");
   }
 
-  return 1;
+  status = memcached_mget(memcache, keys, keys_len, n);
+  if(status == MEMCACHED_SUCCESS) {
+    if(lua_type(L, 2) == LUA_TTABLE) {
+      n = 1;
+      lua_newtable(L);
+      while((results = memcached_fetch_result(memcache, NULL, &status)) != NULL) {
+        key   = memcached_result_key_value(results);
+        value = memcached_result_value(results);
+
+        lua_pushstring(L, key);
+        lua_pushstring(L, value);
+        lua_settable(L, 3);
+      }
+    } else {
+      n = 2;
+      if((results = memcached_fetch_result(memcache, NULL, &status)) != NULL) {
+        value = memcached_result_value(results);
+        cas   = memcached_result_cas(results);
+
+        lua_pushstring(L, value);
+        lua_pushnumber(L, cas);
+      } else {
+        lua_pushboolean(L, 0);
+        lua_pushstring(L, memcached_strerror(memcache, status));
+      }
+    }
+  } else {
+    n = 2;
+    lua_pushboolean(L, 0);
+    lua_pushstring(L, memcached_strerror(memcache, status));
+  }
+
+  memcached_result_free(results);
+  free(keys);
+  free(keys_len);
+  return n;
 }
 
 static int memc_delete(lua_State *L) {
@@ -633,7 +645,7 @@ static int memc_delete(lua_State *L) {
       lua_pushnil(L);
       while(lua_next(L, 2) != 0) {
         if(lua_type(L, -1) == LUA_TSTRING) {
-          k      = lua_tolstring(L, -1, &k_len);
+          k = lua_tolstring(L, -1, &k_len);
           memcached_delete(memcache, k, k_len, ttl);
         }
       }
@@ -656,8 +668,8 @@ static int memc_delete(lua_State *L) {
 
 static int memc_check_key(lua_State *L) {
   if(lua_gettop(L) > 1 && lua_isstring(L, 2)) {
-    size_t     len;
-    const char *key = lua_tolstring(L, 2, &len);
+    size_t len;
+    lua_tolstring(L, 2, &len);
     if(MEMCACHED_MAX_KEY < len) {
       lua_pushboolean(L, 0);
       lua_pushstring(L, "key is greater than memcached limit");
@@ -666,7 +678,7 @@ static int memc_check_key(lua_State *L) {
 
     lua_pushboolean(L, 1);
   } else {
-    luaL_error(L, "argument must be a string");
+    return luaL_error(L, "argument must be a string");
   }
   return 1;
 }
@@ -681,7 +693,6 @@ static int memc_free(lua_State *L) {
 // new instance
 static int memc_new(lua_State *L) {
   memcached_st        *memcache;
-  memcached_server_st *servers = NULL;
   memcached_return    status;
 
   memcache = lua_newuserdata(L, sizeof(struct memcached_st));
@@ -740,6 +751,37 @@ static int memc_new(lua_State *L) {
 
   return 1;
 }
+
+//
+const struct luaL_Reg methods[] = {
+  {"add_server",   &memc_add_server},
+  {"set_behavior", &memc_set_behavior},
+  {"get_behavior", &memc_get_behavior},
+  {"add",          &memc_add},
+  {"replace",      &memc_replace},
+  {"cas",          &memc_cas},
+  {"append",       &memc_append},
+  {"prepend",      &memc_prepend},
+  {"check_key",    &memc_check_key},
+  {"set",          &memc_set},
+  {"delete",       &memc_delete},
+  {"get",          &memc_get},
+  {"incr",         &memc_incr},
+  {"decr",         &memc_decr},
+  {NULL,           NULL}
+};
+
+//
+const struct luaL_Reg metamethods[] = {
+  {"__gc", &memc_free},
+  {NULL,   NULL}
+};
+
+//
+const struct luaL_Reg functions[] = {
+  {"new", &memc_new},
+  {NULL,  NULL}
+};
 
 // register lib
 LUALIB_API int luaopen_libmemcached(lua_State *L) {
