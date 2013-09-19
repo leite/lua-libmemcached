@@ -8,7 +8,7 @@ LIBSDIR =-L/usr/local/lib -L/usr/lib
 
 # basic setup
 CC =gcc
-LIBS =$(LIBSDIR) -lm -lmemcached
+LIBS =$(LIBSDIR) -lm -lmemcached -llua
 OPTS =-O3 -Wall
 LIBOPT =-c
 SHARE =-shared
